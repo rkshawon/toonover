@@ -38,42 +38,86 @@ def build_workflow(p: dict, image_name: str, seed: int | None = None) -> dict:
     wf: dict = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": p["checkpoint"]}},
         "5": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-        "7": {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["1", 2]}},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["1", 2]}},
         "14": {"class_type": "SaveImage", "inputs": {"images": ["13", 0], "filename_prefix": "toonover"}},
     }
+    if p.get("_init"):
+        # continue from the previous drawing (video keyframe chaining)
+        wf["6"] = {"class_type": "LoadImage", "inputs": {"image": p["_init"]}}
+        wf["7"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["6", 0], "vae": ["1", 2]}}
+    elif p["denoise"] >= 0.999:
+        # redraw 100% from scratch: start from empty canvas, only the outlines guide the drawing
+        wf["7"] = {"class_type": "EmptyLatentImage", "inputs": {"width": p["_w"], "height": p["_h"], "batch_size": 1}}
+    else:
+        wf["7"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["1", 2]}}
     model, clip = ["1", 0], ["1", 1]
+    loras = list(p.get("_loras_found", []))
     if p.get("lora"):
-        wf["2"] = {"class_type": "LoraLoader", "inputs": {
-            "model": model, "clip": clip, "lora_name": p["lora"],
-            "strength_model": p.get("lora_strength", 0.8), "strength_clip": p.get("lora_strength", 0.8)}}
-        model, clip = ["2", 0], ["2", 1]
-    wf["3"] = {"class_type": "CLIPTextEncode", "inputs": {"text": p["prompt"], "clip": clip}}
+        loras.insert(0, (p["lora"], p.get("lora_strength", 0.8)))
+    for i, (name, strength) in enumerate(loras):   # chain any number of style LoRAs
+        nid = f"2{i}"
+        wf[nid] = {"class_type": "LoraLoader", "inputs": {
+            "model": model, "clip": clip, "lora_name": name,
+            "strength_model": strength, "strength_clip": strength}}
+        model, clip = [nid, 0], [nid, 1]
+    text = p["prompt"] + (", " + p["describe"] if p.get("describe") else "")
+    wf["3"] = {"class_type": "CLIPTextEncode", "inputs": {"text": text, "clip": clip}}
     wf["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": p["negative"], "clip": clip}}
     pos, neg = ["3", 0], ["4", 0]
     if p.get("controlnet"):
         wf["8"] = {"class_type": "ControlNetLoader", "inputs": {"control_net_name": p["controlnet"]}}
-        cn = ["8", 0]
-        if "union" in p["controlnet"].lower():
-            wf["10"] = {"class_type": "SetUnionControlNetType",
-                        "inputs": {"control_net": cn, "type": "canny/lineart/anime_lineart/mlsd"}}
-            cn = ["10", 0]
-        wf["9"] = {"class_type": "Canny", "inputs": {"image": ["5", 0], "low_threshold": 0.25, "high_threshold": 0.6}}
+        union = "union" in p["controlnet"].lower()
+
+        def typed(node_id, kind):
+            if not union:
+                return ["8", 0]
+            wf[node_id] = {"class_type": "SetUnionControlNetType", "inputs": {"control_net": ["8", 0], "type": kind}}
+            return [node_id, 0]
+
+        # 1) outlines (face, eyes, mouth, pose) - made by Toonover, uploaded as p["_lines"]
+        wf["16"] = {"class_type": "LoadImage", "inputs": {"image": p.get("_lines", image_name)}}
         wf["11"] = {"class_type": "ControlNetApplyAdvanced", "inputs": {
-            "positive": pos, "negative": neg, "control_net": cn, "image": ["9", 0],
-            "strength": p["control_strength"], "start_percent": 0.0, "end_percent": p["control_end"],
-            "vae": ["1", 2]}}
+            "positive": pos, "negative": neg, "control_net": typed("10", "canny/lineart/anime_lineart/mlsd"),
+            "image": ["16", 0], "strength": p["control_strength"], "start_percent": 0.0,
+            "end_percent": p["control_end"], "vae": ["1", 2]}}
         pos, neg = ["11", 0], ["11", 1]
+        # 2) soft colour/layout guide (very blurred photo): keeps hair/skin/clothes colours + composition
+        if p.get("tile_strength", 0) > 0 and p.get("_blur") and union:
+            wf["17"] = {"class_type": "LoadImage", "inputs": {"image": p["_blur"]}}
+            wf["19"] = {"class_type": "ControlNetApplyAdvanced", "inputs": {
+                "positive": pos, "negative": neg, "control_net": typed("18", "tile"),
+                "image": ["17", 0], "strength": p["tile_strength"], "start_percent": 0.0,
+                "end_percent": p.get("tile_end", 0.6), "vae": ["1", 2]}}
+            pos, neg = ["19", 0], ["19", 1]
     wf["12"] = {"class_type": "KSampler", "inputs": {
         "model": model, "seed": int(p["seed"] if seed is None else seed), "steps": p["steps"], "cfg": p["cfg"],
         "sampler_name": p["sampler"], "scheduler": p["scheduler"],
-        "positive": pos, "negative": neg, "latent_image": ["7", 0], "denoise": p["denoise"]}}
+        "positive": pos, "negative": neg, "latent_image": ["7", 0],
+        "denoise": p.get("chain_denoise", 0.55) if p.get("_init") else p["denoise"]}}
     return wf
 
 
 def sdxl_size(w: int, h: int, area: int = 1024 * 1024) -> tuple[int, int]:
     s = (area / (w * h)) ** 0.5
     return max(512, int(round(w * s / 64)) * 64), max(512, int(round(h * s / 64)) * 64)
+
+
+def make_guides(frame: np.ndarray, sw: int, sh: int, blur_div: float = 20):
+    """Outline map (white lines on black) + very blurred colour guide, both at SDXL size."""
+    from ..stylize.ink import clean, xdog
+
+    big = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_CUBIC)
+    g = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
+    # silhouette / big shapes
+    a = clean(xdog(cv2.bilateralFilter(g, 9, 40, 9), sigma=1.3), 0.25, 40)
+    # facial features: local contrast boost first (eyes, brows, mouth, nose)
+    gc = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(g)
+    b = clean(xdog(cv2.bilateralFilter(gc, 9, 30, 9), sigma=1.8, tau=0.975, phi=40), 0.15, 40)
+    lines = (np.clip(np.maximum(a, b) * 1.6, 0, 1) * 255).astype(np.uint8)
+    lines = cv2.dilate(lines, np.ones((2, 2), np.uint8))
+    k = max(3, int(max(sw, sh) / blur_div) | 1)
+    blur = cv2.GaussianBlur(big, (0, 0), k / 2)
+    return cv2.cvtColor(lines, cv2.COLOR_GRAY2BGR), blur
 
 
 class ComfyClient:
@@ -103,6 +147,20 @@ class ComfyClient:
             raise RuntimeError(
                 f"Can't reach ComfyUI at {self.url}. Start ComfyUI first (or set COMFY_URL, "
                 f"e.g. http://127.0.0.1:8000 for ComfyUI Desktop). ({e})") from e
+
+    def checkpoints(self) -> list[str]:
+        try:
+            info = json.loads(self._get("/object_info/CheckpointLoaderSimple"))
+            return list(info["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0])
+        except Exception:
+            return []
+
+    def loras(self) -> list[str]:
+        try:
+            info = json.loads(self._get("/object_info/LoraLoader"))
+            return list(info["LoraLoader"]["input"]["required"]["lora_name"][0])
+        except Exception:
+            return []
 
     def upload(self, img_bgr: np.ndarray, name: str) -> str:
         ok, buf = cv2.imencode(".png", img_bgr)
@@ -143,18 +201,59 @@ class ComfyClient:
 class ComfyRedrawer:
     """Redraw single frames in a preset style."""
 
-    def __init__(self, style: str, url: str = DEFAULT_URL):
+    def __init__(self, style: str, url: str = DEFAULT_URL, describe: str = ""):
         self.style = style
         self.p = load_preset(style)
+        if describe:
+            self.p["describe"] = describe
         self.client = ComfyClient(url)
         self.client.check()
         self.n = 0
+        pref = self.p.get("checkpoint_preferred")
+        if pref:
+            have = self.client.checkpoints()
+            stem = pref.rsplit(".", 1)[0].lower()
+            match = next((c for c in have if c == pref or stem in c.lower()), None)
+            if match:
+                self.p["checkpoint"] = match
+            else:
+                print(f"  (tip: '{pref}' not found in ComfyUI checkpoints - using {self.p['checkpoint']})")
+        # optional style LoRAs: used automatically when their file is in ComfyUI/models/loras
+        wanted = self.p.get("loras", [])
+        if wanted:
+            have = self.client.loras()
+            found = []
+            for w in wanted:
+                m = next((h for h in have if w["match"].lower() in h.lower()), None)
+                if m:
+                    found.append((m, w.get("strength", 0.8)))
+                    if w.get("trigger"):
+                        self.p["prompt"] = w["trigger"] + ", " + self.p["prompt"]
+            self.p["_loras_found"] = found
+            if found:
+                print("  style LoRAs: " + ", ".join(f"{n} @ {st}" for n, st in found))
+            else:
+                print("  (no style LoRA found - using prompt only)")
 
-    def __call__(self, frame: np.ndarray) -> np.ndarray:
+    def __call__(self, frame: np.ndarray, init: np.ndarray | None = None,
+                 init_conf: np.ndarray | None = None) -> np.ndarray:
         h, w = frame.shape[:2]
         sw, sh = sdxl_size(w, h)
         img = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_CUBIC if sw > w else cv2.INTER_AREA)
-        name = self.client.upload(img, f"toonover_key_{self.client.client_id[:8]}_{self.n:05d}.png")
+        tag = f"{self.client.client_id[:8]}_{self.n:05d}"
+        name = self.client.upload(img, f"toonover_key_{tag}.png")
+        lines, blur = make_guides(frame, sw, sh, self.p.get("guide_blur", 20))
+        self.p["_lines"] = self.client.upload(lines, f"toonover_lines_{tag}.png")
+        self.p["_blur"] = self.client.upload(blur, f"toonover_blur_{tag}.png")
+        self.p["_init"] = None
+        if init is not None:
+            if init_conf is not None:   # where tracking was lost, start from the soft colour guide instead
+                c = cv2.GaussianBlur(init_conf, (0, 0), 5)[..., None]
+                soft = cv2.resize(blur, (w, h))
+                init = (init.astype(np.float32) * c + soft.astype(np.float32) * (1 - c)).astype(np.uint8)
+            init_img = cv2.resize(init, (sw, sh), interpolation=cv2.INTER_CUBIC)
+            self.p["_init"] = self.client.upload(init_img, f"toonover_init_{tag}.png")
         self.n += 1
+        self.p["_w"], self.p["_h"] = sw, sh
         out = self.client.run(build_workflow(self.p, name))
         return cv2.resize(out, (w, h), interpolation=cv2.INTER_AREA)

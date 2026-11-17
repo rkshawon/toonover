@@ -1,37 +1,64 @@
 {
-  "_help": "Redraw styles run on your GPU through ComfyUI. Edit prompts / strengths freely. 'lora' is optional: put a .safetensors file in ComfyUI/models/loras and write its file name here.",
+  "_help": "Redraw styles run on your GPU through ComfyUI. denoise 1.0 = redraw 100% from scratch (only the outlines of the original guide the drawing); lower (e.g. 0.6) = keep some of the photo. control_strength = how strictly the original outlines (face, pose) are followed. 'describe' / --describe adds details the outlines can't carry (hair colour, clothes). 'lora' is optional: file name of a .safetensors in ComfyUI/models/loras. tile_strength = how much the soft colour/layout guide (blurred original) is followed: keeps hair/skin/clothes colours and composition (0 = off). chain_denoise: in videos, how much each next keyframe is redrawn on top of the previous one (lower = steadier, higher = follows motion/expressions better).",
   "defaults": {
     "checkpoint": "sd_xl_base_1.0.safetensors",
     "controlnet": "controlnet-union-sdxl-1.0.safetensors",
-    "steps": 22,
-    "cfg": 5.5,
+    "steps": 20,
+    "cfg": 6.0,
     "sampler": "dpmpp_2m",
     "scheduler": "karras",
-    "denoise": 0.62,
-    "control_strength": 0.65,
-    "control_end": 0.85,
+    "denoise": 1.0,
+    "control_strength": 0.75,
+    "control_end": 0.9,
     "seed": 1234,
-    "keyframe_every": 10
+    "keyframe_every": 10,
+    "tile_strength": 0.6,
+    "tile_end": 0.6,
+    "guide_blur": 20,
+    "chain_denoise": 0.55
   },
   "presets": {
-    "ghibli": {
-      "prompt": "hand-painted 2D animated film still, ghibli-inspired anime style, soft watercolor painted background, warm natural sunlight, gentle pastel colors, clean thin line art, expressive anime eyes, cel shading, beautiful, detailed",
-      "negative": "photo, photorealistic, realistic skin texture, 3d render, cgi, blurry, noisy, deformed face, extra fingers, text, watermark, logo, signature",
+    "classic": {
+      "prompt": "classic 1940s theatrical animated cartoon frame, cel animation, smooth rounded simple shapes, clean uniform black outlines, flat solid cel colors with one simple shadow tone, big round expressive cartoon eyes, simplified cartoon face, soft painted background, warm vintage technicolor colors, same pose, same expression",
+      "negative": "photo, photorealistic, realistic skin, caricature, newspaper illustration, ink wash, sketch, crosshatching, watercolor portrait, detailed realistic face, wrinkles, makeup, anime, manga, 3d render, cgi, gradient shading, blurry, deformed face, extra people, animal, cat, mouse, text, watermark, logo, signature",
       "lora": "",
-      "lora_strength": 0.8
+      "lora_strength": 0.8,
+      "cfg": 6.5,
+      "post": "vintage",
+      "loras": [
+        {
+          "match": "cartoon.safetensors",
+          "strength": 0.8,
+          "note": "ntc-ai SDXL cartoon slider - MIT licence, commercial OK"
+        }
+      ]
+    },
+    "ghibli": {
+      "prompt": "2D anime film still, ghibli-inspired hand-painted animation style, clean thin line art, flat cel shading, soft painted background, warm natural light, gentle pastel colors, same person, same face, same expression, same pose",
+      "negative": "photo, photorealistic, realistic skin texture, 3d render, cgi, oil painting, blurry, noisy, deformed face, different person, extra fingers, text, watermark, logo, signature",
+      "lora": "",
+      "lora_strength": 0.8,
+      "checkpoint_preferred": "animagine-xl-4.0.safetensors"
     },
     "toon2d": {
       "prompt": "bright 2D cartoon animation frame, bold clean black outlines, flat vivid saturated colors, simple cel shading, cheerful TV cartoon style, expressive cartoon faces",
       "negative": "photo, photorealistic, 3d render, gradient noise, blurry, deformed face, extra fingers, text, watermark, logo",
       "lora": "",
-      "lora_strength": 0.8
+      "lora_strength": 0.8,
+      "checkpoint_preferred": "animagine-xl-4.0.safetensors",
+      "loras": [
+        {
+          "match": "cartoon.safetensors",
+          "strength": 0.8
+        }
+      ]
     },
     "cartoon3d": {
       "prompt": "3D animated feature film still, stylized cartoon characters, big expressive eyes, smooth soft shading, vibrant colors, cinematic warm lighting, high quality render",
       "negative": "photo, photorealistic, real skin pores, 2d sketch, blurry, deformed face, extra fingers, text, watermark, logo",
       "lora": "",
-      "lora_strength": 0.8,
-      "denoise": 0.66
+      "lora_strength": 0.8
     }
-  }
+  },
+  "_licence_note": "Only commercially usable models are referenced here: SDXL base (CreativeML Open RAIL++-M), xinsir ControlNet union (Apache-2.0), ntc-ai cartoon slider (MIT), Animagine XL 4.0 (Open RAIL++-M). Check the licence of any LoRA/checkpoint before adding it."
 }

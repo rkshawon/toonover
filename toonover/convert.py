@@ -110,12 +110,11 @@ class _SeqReader:
 
 def convert_redraw(source: str, style: str, out_path: Path | None = None, title: str = "", channel: str = "",
                    max_seconds: float = 90, max_fps: float = 30, keyframe_every: int | None = None,
-                   comfy_url: str | None = None, redrawer=None, auto_title: bool = False,
+                   comfy_url: str | None = None, redrawer=None, auto_title: bool = False, describe: str = "",
                    log=print, progress=None, job_id: str | None = None) -> Path:
     """GPU redraw styles: keyframes redrawn by ComfyUI, in-betweens carried along the motion."""
     from .redraw.comfy import DEFAULT_URL, ComfyRedrawer
     from .redraw.propagate import find_cuts, plan_keyframes, propagate_video
-    from .stylize.toon import ToonStylizer
 
     prog = progress or (lambda s, f: None)
     require_ffmpeg()
@@ -124,7 +123,7 @@ def convert_redraw(source: str, style: str, out_path: Path | None = None, title:
     job.mkdir(parents=True, exist_ok=True)
     if redrawer is None:
         log(f"Connecting to ComfyUI at {comfy_url or DEFAULT_URL}")
-        redrawer = ComfyRedrawer(style, comfy_url or DEFAULT_URL)
+        redrawer = ComfyRedrawer(style, comfy_url or DEFAULT_URL, describe=describe)
     every = keyframe_every or (redrawer.p.get("keyframe_every", 10) if hasattr(redrawer, "p") else 10)
 
     prog("download", 0.0)
@@ -159,14 +158,16 @@ def convert_redraw(source: str, style: str, out_path: Path | None = None, title:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     vw = VideoWriter(out_path, ow, oh, fps, audio)
 
-    fb_style = ToonStylizer(saturation=1.35, softness=0.2, hue_flatness=0.9)
-    fb_flow = FlowTracker()
-
-    def fallback(frame):
-        fb_flow.is_cut = True
-        return fb_style.process(frame, fb_flow)
+    post = None
+    if getattr(redrawer, "p", {}).get("post") == "vintage":
+        from .stylize.film import vintage
+        post = vintage
+    count = {"i": 0}
 
     def write(img):
+        if post is not None:
+            img = post(img, count["i"])
+            count["i"] += 1
         if template is not None:
             canvas = template.copy()
             canvas[y0:y0 + h] = img
@@ -175,7 +176,7 @@ def convert_redraw(source: str, style: str, out_path: Path | None = None, title:
 
     t0 = time.time()
     try:
-        propagate_video(_SeqReader(video), segs, redrawer, fallback, write,
+        propagate_video(_SeqReader(video), segs, redrawer, None, write,
                         progress=lambda f: prog("redraw", f))
     finally:
         vw.close()
@@ -184,7 +185,7 @@ def convert_redraw(source: str, style: str, out_path: Path | None = None, title:
     return out_path
 
 
-def convert_image(path: Path, style: str, out_path: Path, ai_size: int = 512) -> Path:
+def convert_image(path: Path, style: str, out_path: Path, ai_size: int = 512, describe: str = "") -> Path:
     frame = cv2.imread(str(path))
     if frame is None:
         raise FileNotFoundError(path)
@@ -192,7 +193,12 @@ def convert_image(path: Path, style: str, out_path: Path, ai_size: int = 512) ->
     if style in presets():
         from .redraw.comfy import ComfyRedrawer
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out_path), ComfyRedrawer(style)(frame))
+        rd = ComfyRedrawer(style, describe=describe)
+        img = rd(frame)
+        if rd.p.get("post") == "vintage":
+            from .stylize.film import vintage
+            img = vintage(img, 0, weave=False)
+        cv2.imwrite(str(out_path), img)
         return out_path
     st = make_stylizer(style, ai_size=ai_size, ai_every=1)
     fl = FlowTracker()

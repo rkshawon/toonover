@@ -49,18 +49,28 @@ def _match(cur, warped_src, tol=22.0):
     return np.clip(1.0 - d.astype(np.float32) / tol, 0, 1)
 
 
-def find_cuts(frames_iter, threshold: float = 0.45) -> tuple[list[int], int]:
-    """Return (shot start indices, total frames)."""
-    prev = None
+def find_cuts(frames_iter, threshold: float = 0.35) -> tuple[list[int], int]:
+    """Return (shot start indices, total frames). Uses colour histograms AND pixel change,
+    so cuts between two similarly-lit shots are still found."""
+    prev_h = prev_g = None
+    diffs: list[float] = []
     cuts = [0]
     n = 0
     for f in frames_iter:
-        hsv = cv2.cvtColor(cv2.resize(f, (160, 90)), cv2.COLOR_BGR2HSV)
+        small = cv2.resize(f, (160, 90), interpolation=cv2.INTER_AREA)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         h = cv2.calcHist([hsv], [0, 1], None, [32, 16], [0, 180, 0, 256])
         cv2.normalize(h, h)
-        if prev is not None and cv2.compareHist(prev, h, cv2.HISTCMP_BHATTACHARYYA) > threshold and n - cuts[-1] > 2:
-            cuts.append(n)
-        prev = h
+        g = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
+        if prev_h is not None:
+            hd = cv2.compareHist(prev_h, h, cv2.HISTCMP_BHATTACHARYYA)
+            pd = float(np.abs(g - prev_g).mean())
+            base = float(np.median(diffs[-30:])) if diffs else pd
+            cut = hd > threshold or (pd > 18 and pd > 4 * max(base, 1.5))
+            if cut and n - cuts[-1] > 2:
+                cuts.append(n)
+            diffs.append(pd)
+        prev_h, prev_g = h, g
         n += 1
     return cuts, n
 
@@ -81,46 +91,57 @@ def plan_keyframes(cuts: list[int], total: int, every: int) -> list[tuple[int, i
 
 
 def propagate_video(read_frame: Callable[[int], np.ndarray], segments: list[tuple[int, int]],
-                    redraw: Callable[[np.ndarray], np.ndarray], fallback: Callable[[np.ndarray], np.ndarray],
-                    write: Callable[[np.ndarray], None], progress=None, flow_scale: float = 0.5):
-    """read_frame(i) must support sequential access. Calls write() once per frame, in order."""
-    key_cache: dict[int, np.ndarray] = {}
+                    redraw: Callable[..., np.ndarray], fallback=None,
+                    write: Callable[[np.ndarray], None] = None, progress=None, flow_scale: float = 0.5):
+    """read_frame(i) must support sequential access. Calls write() once per frame, in order.
+
+    Keyframes are chained: the first keyframe of a shot is drawn from scratch, every next
+    keyframe starts from the previous drawing carried along the motion (redraw(frame, init=...)),
+    so characters, colours and backgrounds stay the same through the shot.
+    """
     grid = None
     total_keys = len({k for s in segments for k in s})
-    done_keys = 0
+    done = 0
+    prev_key: tuple[int, np.ndarray] | None = None   # (frame index, drawing)
 
-    def key(i, frame):
-        nonlocal done_keys
-        if i not in key_cache:
-            key_cache.clear() if len(key_cache) > 2 else None
-            key_cache[i] = redraw(frame)
-            done_keys += 1
-            if progress:
-                progress(done_keys / max(total_keys, 1))
-        return key_cache[i]
+    def tick():
+        nonlocal done
+        done += 1
+        if progress:
+            progress(done / max(total_keys, 1))
 
     for si, (a, b) in enumerate(segments):
         frames = [read_frame(i) for i in range(a, b + 1)]
         if grid is None or grid.gx.shape != frames[0].shape[:2]:
             grid = _Grid(*frames[0].shape[:2])
-        Sa = key(a, frames[0])
+        if prev_key is not None and prev_key[0] == a:
+            Sa = prev_key[1]
+        else:                                           # new shot: draw from scratch
+            Sa = redraw(frames[0])
+            tick()
         last_in_shot = si + 1 == len(segments) or segments[si + 1][0] != b
         if a == b:
             write(Sa)
+            prev_key = (a, Sa)
             continue
-        Sb = key(b, frames[-1])
         L = len(frames)
         small = [_small_gray(f, flow_scale) for f in frames]
+        ones = np.ones(frames[0].shape[:2], np.float32)
 
         # forward chain from key a
-        Wf, cf = [Sa], [np.ones(frames[0].shape[:2], np.float32)]
+        Wf, cf = [Sa], [ones]
         for j in range(1, L):
             m = _map(small[j], small[j - 1], grid, flow_scale)
             Wf.append(_remap(Wf[-1], m))
             cf.append(_remap(cf[-1], m) * _match(frames[j], _remap(frames[j - 1], m)))
+
+        # key b starts from the carried drawing (keeps the shot consistent)
+        Sb = redraw(frames[-1], init=Wf[-1], init_conf=cf[-1])
+        tick()
+
         # backward chain from key b
         Wb, cb = [None] * L, [None] * L
-        Wb[-1], cb[-1] = Sb, np.ones(frames[0].shape[:2], np.float32)
+        Wb[-1], cb[-1] = Sb, ones
         for j in range(L - 2, -1, -1):
             m = _map(small[j], small[j + 1], grid, flow_scale)
             Wb[j] = _remap(Wb[j + 1], m)
@@ -137,10 +158,8 @@ def propagate_video(read_frame: Callable[[int], np.ndarray], segments: list[tupl
             w = j / (L - 1)
             wa = cv2.GaussianBlur((1 - w) * cf[j], (9, 9), 0)[..., None]
             wb = cv2.GaussianBlur(w * cb[j], (9, 9), 0)[..., None]
-            den = wa + wb
-            out = (Wf[j].astype(np.float32) * wa + Wb[j].astype(np.float32) * wb) / np.maximum(den, 1e-4)
-            conf = np.clip(den / 0.35, 0, 1)            # both chains lost track -> disoccluded area
-            if conf.min() < 0.95:
-                fb = fallback(frames[j]).astype(np.float32)
-                out = out * conf + fb * (1 - conf)
+            eps = 0.05          # where both lost track, fall back to plain time blend (never a different style)
+            out = (Wf[j].astype(np.float32) * (wa + eps * (1 - w)) + Wb[j].astype(np.float32) * (wb + eps * w)) \
+                / (wa + wb + eps)
             write(np.clip(out, 0, 255).astype(np.uint8))
+        prev_key = (b, Sb)

@@ -4,7 +4,6 @@
   toon      no AI. Cel-shaded rotoscope traced from the footage (fast, free, 100% recognizable)
   anime     light AI (AnimeGANv2 face_paint v2): soft hand-painted cartoon look
   paint     light AI (face_paint v1): stronger, more stylized faces
-  paprika   light AI: bold colourful anime film look
   celeba    light AI: clean, smooth cartoon faces
 Add '+toon' to any AI style (e.g. 'anime+toon') to flatten it into cel colours + ink.
 """
@@ -15,7 +14,7 @@ from ..config import MODELS
 STYLE_FILES = {
     "anime": "face_paint_512_v2.onnx",
     "paint": "face_paint_512_v1.onnx",
-    "paprika": "paprika.onnx",
+    # "paprika": "paprika.onnx",   # removed: original AnimeGANv2 weights are non-commercial
     "celeba": "celeba_distill.onnx",
 }
 # friendly names
@@ -30,11 +29,11 @@ STYLE_HELP = {
     "cartoon-flat": "light AI - simpler, flatter cartoon faces",
     "anime": "light AI - soft hand-painted look",
     "paint": "light AI - stronger stylized faces",
-    "paprika": "light AI - bold colourful anime-film look",
     "celeba": "light AI - smooth cartoon faces",
 }
 # GPU redraw styles (need ComfyUI running) - real cartoon redraw, see assets/redraw_presets.json
 REDRAW_HELP = {
+    "classic": "GPU redraw - 1940s golden-age theatrical cartoon look + vintage film finish",
     "ghibli": "GPU redraw - ghibli-inspired hand-painted anime film look",
     "toon2d": "GPU redraw - bright 2D TV cartoon, bold outlines, flat vivid colours",
     "cartoon3d": "GPU redraw - 3D animated movie look",

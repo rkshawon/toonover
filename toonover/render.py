@@ -9,10 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .backgrounds import make_background
-from .character import Character, Spec
 from .config import ASSETS, RenderSettings
-from .director import Camera, Pose
 
 FONT_CANDIDATES = [
     *sorted(str(p) for p in (ASSETS / "fonts").glob("*.ttf")),
@@ -63,7 +60,11 @@ def make_template(rs: RenderSettings) -> np.ndarray:
 
 
 class Renderer:
-    def __init__(self, rs: RenderSettings, specs: list[Spec]):
+    """(later feature) cast renderer - imports are lazy so normal conversion doesn't need MediaPipe."""
+
+    def __init__(self, rs: RenderSettings, specs: list):
+        from .backgrounds import make_background
+        from .character import Character
         self.rs = rs
         self.ss = rs.supersample
         self.sw = rs.width
@@ -83,7 +84,7 @@ class Renderer:
         U_w = min(spacing / 1.75, margin / 0.85)
         self.U = min(U_h, U_w) if k > 1 else U_h
 
-    def frame(self, poses: list[Pose], cam: Camera, t: float) -> np.ndarray:
+    def frame(self, poses: list, cam, t: float) -> np.ndarray:
         img = self.bg.copy()
         for x, ch in zip(self.xs, self.chars):
             ch.shadow(img, x, self.floor_y, self.U * ch.s.height, self.shadow_col)
