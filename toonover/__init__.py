@@ -1,2 +1,2 @@
-"""Toonover - turn meme videos into flat 2D cartoons re-enacted by your own cast."""
-__version__ = "0.1.0"
+"""Toonover - turn real photos and videos into cartoons of the same people."""
+__version__ = "0.2.0"

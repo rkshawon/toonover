@@ -39,7 +39,7 @@ Tune prompts, strength and keyframe spacing in `assets/redraw_presets.json`
 | `toon` (default) | no | cel-shaded trace: flat colour bands + ink lines | ~0.1 s/frame |
 | `cartoon` | light, CPU | painted cartoon + flat colours + ink (**best look**) | ~0.3 s/frame |
 | `cartoon-flat` | light, CPU | simpler, flatter cartoon faces | ~0.3 s/frame |
-| `anime`, `paint`, `paprika`, `celeba` | light, CPU | raw AI looks (add `+toon` for cel finish) | ~0.3 s/frame |
+| `anime`, `paint`, `celeba` | light, CPU | raw AI looks (add `+toon` for cel finish) | ~0.3 s/frame |
 
 `toonover styles` lists them all. Everything runs on your own PC: no GPU, no API, no per-video cost.
 
@@ -97,11 +97,6 @@ In `toonover/stylize/toon.py`, `ToonStylizer(...)`:
 | `toonover/web/app.py` | FastAPI web app |
 | `models/styles/*.onnx` | AI style models (AnimeGANv2 by bryandlee/animegan2-pytorch, MIT licence) |
 
-### Later feature: Toonover cast (kept, not used by default)
-
-`toonover cast-make <video>` re-enacts the clip with original cast characters (`assets/cast.json`,
-`character.py`, `director.py`, `track.py`, `pipeline.py`). Needs `pip install -e .[cast]` (MediaPipe).
-
 ## Notes
 
 - AI styles slightly "beautify" faces. If someone must look more like themselves, use `toon` or `celeba+toon`.
@@ -113,4 +108,3 @@ In `toonover/stylize/toon.py`, `ToonStylizer(...)`:
 1. Face-aware ink (landmark-guided eyes/brows/lips) for cleaner faces in `toon`
 2. Person/background separation (flat painted backgrounds, crisper people)
 3. Optional GPU / API video-to-video path for a fully redrawn look
-4. Cast mode (re-enact with your own characters)

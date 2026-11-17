@@ -18,9 +18,6 @@ dependencies = [
   "python-multipart>=0.0.9",
 ]
 
-[project.optional-dependencies]
-cast = ["mediapipe>=0.10.20"]   # later feature: re-enact with the Toonover cast
-
 [project.scripts]
 toonover = "toonover.cli:main"
 

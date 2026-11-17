@@ -5,15 +5,12 @@
   toonover make <link> -s ghibli                     GPU redraw (needs ComfyUI running)
   toonover styles                                   list styles
   toonover serve                                    web app
-  toonover cast-make / cast / preview               (later feature) re-enact with the Toonover cast
 """
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from .backgrounds import BACKGROUNDS
-from .config import RenderSettings
 from .redraw.comfy import presets as redraw_presets
 from .stylize import ALL_HELP, STYLES
 
@@ -69,19 +66,6 @@ def main(argv=None):
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
 
-    # ---- later feature: re-enact with the Toonover cast ----
-    cm = sub.add_parser("cast-make", help="(later feature) re-enact the video with the Toonover cast")
-    cm.add_argument("source")
-    cm.add_argument("-o", "--out", type=Path)
-    cm.add_argument("-t", "--title", default="")
-    cm.add_argument("-b", "--background", default="stage", choices=BACKGROUNDS)
-    cm.add_argument("-c", "--cast", default="")
-    sub.add_parser("cast", help="(later feature) list cast characters")
-    pv = sub.add_parser("preview", help="(later feature) still of the cast")
-    pv.add_argument("-b", "--background", default="stage", choices=BACKGROUNDS)
-    pv.add_argument("-c", "--cast", default="bablu,pinky,papa")
-    pv.add_argument("-o", "--out", type=Path, default=Path("output/preview.png"))
-
     a = ap.parse_args(argv)
 
     if a.cmd == "make" and a.style in redraw_presets():
@@ -116,31 +100,6 @@ def main(argv=None):
     elif a.cmd == "serve":
         import uvicorn
         uvicorn.run("toonover.web.app:app", host=a.host, port=a.port)
-
-    elif a.cmd == "cast-make":
-        from .pipeline import make_cartoon
-        rs = RenderSettings(title=a.title, background=a.background,
-                            cast=[c.strip() for c in a.cast.split(",") if c.strip()])
-        make_cartoon(a.source, rs, a.out, log=lambda m: print(f"\n  {m}"), progress=_progress_printer())
-
-    elif a.cmd == "cast":
-        from .character import load_cast
-        for cid, s in load_cast().items():
-            print(f"{cid:<8} {s.name:<14} {s.hair_style:<11} {s.outfit:<7} {', '.join(s.accessories)}")
-
-    elif a.cmd == "preview":
-        import cv2
-        from .character import load_cast
-        from .director import Camera, Pose
-        from .render import Renderer
-        cast = load_cast()
-        ids = [c.strip() for c in a.cast.split(",") if c.strip()]
-        r = Renderer(RenderSettings(title="Toonover cast preview", background=a.background), [cast[i] for i in ids])
-        poses = [Pose(present=1, smile=0.6, mouth_open=0.4 if i == 0 else 0, talk=0.8 if i == 0 else 0)
-                 for i in range(len(ids))]
-        a.out.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(a.out), r.frame(poses, Camera(), 0.5))
-        print(f"Saved {a.out}")
 
 
 if __name__ == "__main__":
