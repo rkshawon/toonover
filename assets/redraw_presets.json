@@ -1,0 +1,37 @@
+{
+  "_help": "Redraw styles run on your GPU through ComfyUI. Edit prompts / strengths freely. 'lora' is optional: put a .safetensors file in ComfyUI/models/loras and write its file name here.",
+  "defaults": {
+    "checkpoint": "sd_xl_base_1.0.safetensors",
+    "controlnet": "controlnet-union-sdxl-1.0.safetensors",
+    "steps": 22,
+    "cfg": 5.5,
+    "sampler": "dpmpp_2m",
+    "scheduler": "karras",
+    "denoise": 0.62,
+    "control_strength": 0.65,
+    "control_end": 0.85,
+    "seed": 1234,
+    "keyframe_every": 10
+  },
+  "presets": {
+    "ghibli": {
+      "prompt": "hand-painted 2D animated film still, ghibli-inspired anime style, soft watercolor painted background, warm natural sunlight, gentle pastel colors, clean thin line art, expressive anime eyes, cel shading, beautiful, detailed",
+      "negative": "photo, photorealistic, realistic skin texture, 3d render, cgi, blurry, noisy, deformed face, extra fingers, text, watermark, logo, signature",
+      "lora": "",
+      "lora_strength": 0.8
+    },
+    "toon2d": {
+      "prompt": "bright 2D cartoon animation frame, bold clean black outlines, flat vivid saturated colors, simple cel shading, cheerful TV cartoon style, expressive cartoon faces",
+      "negative": "photo, photorealistic, 3d render, gradient noise, blurry, deformed face, extra fingers, text, watermark, logo",
+      "lora": "",
+      "lora_strength": 0.8
+    },
+    "cartoon3d": {
+      "prompt": "3D animated feature film still, stylized cartoon characters, big expressive eyes, smooth soft shading, vibrant colors, cinematic warm lighting, high quality render",
+      "negative": "photo, photorealistic, real skin pores, 2d sketch, blurry, deformed face, extra fingers, text, watermark, logo",
+      "lora": "",
+      "lora_strength": 0.8,
+      "denoise": 0.66
+    }
+  }
+}

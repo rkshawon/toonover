@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toonover"
+version = "0.1.0"
+description = "Turn real meme videos into cartoon versions of the same people."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "opencv-python>=4.9",
+  "pillow>=10.1",
+  "onnxruntime>=1.17",
+  "yt-dlp>=2025.1.1",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+cast = ["mediapipe>=0.10.20"]   # later feature: re-enact with the Toonover cast
+
+[project.scripts]
+toonover = "toonover.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["toonover*"]
